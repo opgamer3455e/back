@@ -76,7 +76,14 @@ app.post('/api/convert', upload.single('video'), (req, res) => {
 
     console.log(`Job ${jobId} | Starting FFmpeg...`);
 
-    const ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
+    const ffmpegProcess = spawn('ffmpeg', ffmpegArgs, { stdio: 'ignore' });
+
+    ffmpegProcess.on('error', (err) => {
+        console.error(`Job ${jobId} | FFmpeg spawn error:`, err);
+        cleanupDir(outputDir);
+        fs.unlink(videoPath, () => {});
+        if (!res.headersSent) res.status(500).json({ error: 'Failed to start FFmpeg process' });
+    });
 
     ffmpegProcess.on('close', (code) => {
         if (code !== 0) {
