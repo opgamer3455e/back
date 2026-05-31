@@ -11,11 +11,10 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 app.use(cors({
-    origin: true, // Dynamically echoes back the requesting origin (essential when credentials is true)
+    origin: '*', // Allows ANY origin, including 'null' (file:///)
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Bypass-Tunnel-Reminder'],
-    exposedHeaders: ['Content-Disposition'],
-    credentials: true
+    exposedHeaders: ['Content-Disposition']
 }));
 app.use(express.json());
 

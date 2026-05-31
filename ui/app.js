@@ -75,11 +75,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             // 1. SYNCHRONOUS SINGLE-GO REQUEST
-            const response = await fetch('https://atharv-backend-api-v1.loca.lt/api/convert', {
+            const response = await fetch('https://polite-goat-3.loca.lt/api/convert', {
                 method: 'POST',
-                headers: {
-                    'Bypass-Tunnel-Reminder': 'true'
-                },
                 body: formData
             });
 
