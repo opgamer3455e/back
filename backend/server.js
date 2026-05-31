@@ -11,10 +11,11 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 app.use(cors({
-    origin: '*',
+    origin: true, // Dynamically echoes back the requesting origin (essential when credentials is true)
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Bypass-Tunnel-Reminder'],
-    exposedHeaders: ['Content-Disposition']
+    exposedHeaders: ['Content-Disposition'],
+    credentials: true
 }));
 app.use(express.json());
 
@@ -32,7 +33,7 @@ const upload = multer({ storage });
 
 const cleanupDir = (dirPath) => {
     if (fs.existsSync(dirPath)) {
-        fs.rm(dirPath, { recursive: true, force: true }, () => {});
+        fs.rm(dirPath, { recursive: true, force: true }, () => { });
     }
 };
 
@@ -47,7 +48,7 @@ app.post('/api/convert', upload.single('video'), (req, res) => {
     const fps = req.body.fps || '5';
     const format = req.body.format || 'jpg';
     const width = req.body.width || '-1';
-    
+
     const ffmpegArgs = ['-i', videoPath];
     if (width !== '-1' && width !== '') ffmpegArgs.push('-vf', `fps=${fps},scale=${width}:-1`);
     else ffmpegArgs.push('-vf', `fps=${fps}`);
@@ -61,14 +62,14 @@ app.post('/api/convert', upload.single('video'), (req, res) => {
     }
 
     console.log(`Job ${jobId} | Starting synchronous FFmpeg...`);
-    
+
     // Essential fix to prevent buffer stall on large videos!
     const ffmpegProcess = spawn('ffmpeg', ffmpegArgs, { stdio: 'ignore' });
 
     ffmpegProcess.on('error', (err) => {
         console.error(`Job ${jobId} | spawn error:`, err);
         cleanupDir(outputDir);
-        fs.unlink(videoPath, () => {});
+        fs.unlink(videoPath, () => { });
         if (!res.headersSent) res.status(500).json({ error: 'FFmpeg failed to start.' });
     });
 
@@ -76,7 +77,7 @@ app.post('/api/convert', upload.single('video'), (req, res) => {
         if (code !== 0) {
             console.error(`Job ${jobId} | exited with code ${code}`);
             cleanupDir(outputDir);
-            fs.unlink(videoPath, () => {});
+            fs.unlink(videoPath, () => { });
             if (!res.headersSent) return res.status(500).json({ error: 'FFmpeg extraction failed. Corrupt video?' });
             return;
         }
@@ -91,13 +92,13 @@ app.post('/api/convert', upload.single('video'), (req, res) => {
 
         archive.on('error', (err) => {
             console.error(`Job ${jobId} | Archiver error:`, err);
-            if (!res.headersSent) res.status(500).send({error: err.message});
+            if (!res.headersSent) res.status(500).send({ error: err.message });
         });
 
         res.on('finish', () => {
             console.log(`Job ${jobId} | Zip sent. Performing deep cleanup.`);
             cleanupDir(outputDir);
-            fs.unlink(videoPath, () => {});
+            fs.unlink(videoPath, () => { });
         });
 
         archive.pipe(res);

@@ -7,7 +7,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const progressContainer = document.getElementById('progress-container');
     const progressBar = document.getElementById('progress-bar');
     const statusText = document.getElementById('status-text');
-    
+
     // Drag and drop mechanics
     ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
         dropZone.addEventListener(eventName, preventDefaults, false);
@@ -36,7 +36,7 @@ document.addEventListener('DOMContentLoaded', () => {
         videoInput.click();
     });
 
-    videoInput.addEventListener('change', function() {
+    videoInput.addEventListener('change', function () {
         handleFiles(this.files);
     });
 
@@ -75,7 +75,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             // 1. SYNCHRONOUS SINGLE-GO REQUEST
-            const response = await fetch('http://atharv-backend-api-v1.loca.lt/api/convert', {
+            const response = await fetch('https://atharv-backend-api-v1.loca.lt/api/convert', {
                 method: 'POST',
                 headers: {
                     'Bypass-Tunnel-Reminder': 'true'
@@ -88,7 +88,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 try {
                     const errData = await response.json();
                     errMsg = errData.error;
-                } catch(e) {}
+                } catch (e) { }
                 throw new Error(errMsg);
             }
 
@@ -98,7 +98,7 @@ document.addEventListener('DOMContentLoaded', () => {
             progressBar.style.transition = 'width 0.5s ease';
 
             const blob = await response.blob();
-            
+
             // Extract filename if provided
             let filename = 'frames.zip';
             const contentDisposition = response.headers.get('Content-Disposition');
