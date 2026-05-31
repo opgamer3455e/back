@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aura | Advanced Video-to-Frame Extraction API</title>
+    <meta name="description" content="Premium API-driven Video to Image Sequence generator. Extract JPG or PNG frames instantly.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&family=Syne:wght@500;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- Background atmospheric layers -->
+    <div class="bg-layer pattern"></div>
+    <div class="bg-layer gradient-glow"></div>
+
+    <main class="app-container">
+        <!-- Header with staggered reveal -->
+        <header class="app-header animate-slide-up" style="--delay: 0.1s">
+            <h1 class="logo-title">AURA <span class="highlight">API</span></h1>
+            <p class="tagline">High-fidelity sequential frame extraction protocol.</p>
+        </header>
+
+        <div class="grid-layout">
+            <!-- Left Column: Generator UI -->
+            <section class="panel animate-slide-up" style="--delay: 0.2s">
+                <div class="panel-header">
+                    <h2>Extraction Interface</h2>
+                    <div class="status-dot"></div>
+                </div>
+
+                <form id="extract-form" class="form-grid">
+                    <div class="drop-zone" id="drop-zone">
+                        <input type="file" id="video-input" accept="video/mp4,video/webm,video/mov,video/avi" hidden required>
+                        <div class="drop-content">
+                            <span class="drop-icon">⎋</span>
+                            <span class="drop-text" id="drop-text">Drag & Drop Video Asset<br><small>or click to browse local files</small></span>
+                        </div>
+                    </div>
+
+                    <div class="settings-group">
+                        <div class="input-wrap">
+                            <label for="fps">Extraction Rate (FPS)</label>
+                            <select id="fps" name="fps">
+                                <option value="1">1 FPS</option>
+                                <option value="5" selected>5 FPS</option>
+                                <option value="10">10 FPS</option>
+                                <option value="24">24 FPS (Cinematic)</option>
+                                <option value="30">30 FPS (Full)</option>
+                            </select>
+                        </div>
+
+                        <div class="input-wrap">
+                            <label for="format">Output Format</label>
+                            <select id="format" name="format">
+                                <option value="jpg" selected>JPG (Compressed)</option>
+                                <option value="png">PNG (Lossless)</option>
+                            </select>
+                        </div>
+
+                        <div class="input-wrap">
+                            <label for="width">Scale Width (px)</label>
+                            <select id="width" name="width">
+                                <option value="-1" selected>Original Native</option>
+                                <option value="1920">1080p (1920px)</option>
+                                <option value="1280">720p (1280px)</option>
+                                <option value="640">Web (640px)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="cyber-btn" id="submit-btn">
+                        <span class="btn-text">INITIALIZE EXTRACTION</span>
+                        <span class="btn-glitch"></span>
+                    </button>
+                </form>
+
+                <div class="progress-container hidden" id="progress-container">
+                    <div class="progress-info">
+                        <span>Status: <span id="status-text" class="glow-text">Uploading...</span></span>
+                    </div>
+                    <div class="progress-track">
+                        <div class="progress-bar" id="progress-bar"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Right Column: API Docs -->
+            <section class="panel panel-api animate-slide-up" style="--delay: 0.3s">
+                <div class="panel-header">
+                    <h2>API Integration</h2>
+                    <span class="badge">RESTful</span>
+                </div>
+                
+                <div class="api-content">
+                    <p class="api-desc">Integrate Aura directly into your pipeline. Send a multipart form request and receive a compressed ZIP archive stream.</p>
+                    
+                    <div class="code-block-wrapper">
+                        <div class="code-tabs">
+                            <button class="tab active">cURL</button>
+                            <button class="tab">Fetch (JS)</button>
+                        </div>
+                        <pre class="code-block"><code id="code-snippet">curl -X POST http://localhost:3000/api/convert \
+  -F "video=@./footage.mp4" \
+  -F "fps=5" \
+  -F "format=jpg" \
+  -F "width=1280" \
+  -o frames.zip</code></pre>
+                        <button class="copy-btn" id="copy-btn" title="Copy to clipboard">
+                            Copy
+                        </button>
+                    </div>
+                    
+                    <div class="api-specs">
+                        <div class="spec-row">
+                            <span class="spec-key">Endpoint</span>
+                            <span class="spec-val highlight">POST /api/convert</span>
+                        </div>
+                        <div class="spec-row">
+                            <span class="spec-key">Content-Type</span>
+                            <span class="spec-val">multipart/form-data</span>
+                        </div>
+                        <div class="spec-row">
+                            <span class="spec-key">Response</span>
+                            <span class="spec-val">application/zip</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>
