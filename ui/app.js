@@ -263,7 +263,8 @@ async function processZipQueue() {
     if (zipQueue.length === 0 || isAnalyzing) return;
 
     isAnalyzing = true;
-    const { timestamp, blob } = zipQueue.shift();
+    const item = zipQueue.shift();
+    const { timestamp, blob } = item;
     log(`[${timestamp}] EXTRACTING FRAMES...`, 'info');
 
     try {
@@ -289,7 +290,12 @@ async function processZipQueue() {
             reader.readAsDataURL(imgBlob);
         });
 
-        await analyzeWithOpenRouter(timestamp, base64Data);
+        const success = await analyzeWithOpenRouter(timestamp, base64Data);
+        if (success === false) {
+            log(`[${timestamp}] RATE LIMITED. PAUSING QUEUE FOR 10 SECONDS...`, 'error');
+            zipQueue.unshift(item);
+            await new Promise(r => setTimeout(r, 10000));
+        }
 
     } catch (err) {
         log(`[${timestamp}] EXTRACTION FAILED: ${err.message}`, 'error');
@@ -334,11 +340,14 @@ async function analyzeWithOpenRouter(timestamp, base64Data) {
             log(`[${timestamp}] AI RETURNED NO RESPONSE`, 'error');
         }
         console.log(`[${timestamp}] Palantir Aegis Success:`, data);
+        return true;
 
     } catch (err) {
         log(`[${timestamp}] AI QUERY FAILED: ${err.message}`, 'error');
         console.error(`[${timestamp}] Palantir Aegis Error:`, err);
-                                     }
+        if (err.message.includes('429')) return false; // Return false to trigger retry
+        return true; // Drop chunk for other errors
+    }
 }
 
 // Listeners
