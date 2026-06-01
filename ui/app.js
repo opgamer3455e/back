@@ -67,8 +67,8 @@ async function setupWebcam() {
         camStatus.classList.add('online');
         log('SENSOR INITIATED SUCCESSFULLY', 'success');
         
-        btnInit.disabled = true;
-        btnHalt.disabled = false;
+        btnInit.classList.add('hidden');
+        btnHalt.classList.remove('hidden');
         recBadge.classList.remove('hidden');
 
         startRecordingCycle();
@@ -129,8 +129,8 @@ function haltCapture() {
     videoEl.srcObject = null;
     camStatus.textContent = 'OFFLINE';
     camStatus.classList.remove('online');
-    btnInit.disabled = false;
-    btnHalt.disabled = true;
+    btnInit.classList.remove('hidden');
+    btnHalt.classList.add('hidden');
     recBadge.classList.add('hidden');
     log('SENSOR UPLINK AND ALL PROCESSES KILLED', 'error');
 }
