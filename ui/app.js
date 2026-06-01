@@ -190,16 +190,8 @@ async function processAndUploadChunk(timestamp, blob) {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         
         const zipBlob = await res.blob();
-        log(`CHUNK [${timestamp}] PROCESSED. DOWNLOADING ZIP...`, 'success');
-        
-        const url = URL.createObjectURL(zipBlob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `frames-${timestamp}.zip`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        console.log(`Success: Received frames ZIP for chunk [${timestamp}] (${zipBlob.size} bytes).`);
+        log(`CHUNK [${timestamp}] RECEIVED SUCCESSFULLY. (No auto-download)`, 'success');
     } catch (err) {
         log(`TRANSMISSION FAILED: ${err.message}`, 'error');
     }
