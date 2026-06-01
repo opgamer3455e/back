@@ -89,7 +89,7 @@ setInterval(() => {
         reqMinuteEl.textContent = reqHistory.length;
         if (reqDailyEl) reqDailyEl.textContent = requestsToday;
         
-        if (isGlobalRateLimited && reqHistory.length < 10 && requestsToday < 200) {
+        if (isGlobalRateLimited && reqHistory.length < 10 && requestsToday < 50) {
             isGlobalRateLimited = false;
             log('RATE LIMIT RESET. RESUMING ALL FUNCTIONS.', 'success');
         }
@@ -290,7 +290,7 @@ async function processAndUploadChunk(timestamp, blob) {
 async function processZipQueue() {
     if (zipQueue.length === 0 || isAnalyzing || isGlobalRateLimited) return;
 
-    if (reqHistory.length >= 10 || requestsToday >= 200) {
+    if (reqHistory.length >= 10 || requestsToday >= 50) {
         if (!isGlobalRateLimited) {
             isGlobalRateLimited = true;
             log('RATE LIMIT EXCEEDED! PAUSING SYSTEM UNTIL RESET.', 'error');
