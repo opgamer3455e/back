@@ -19,6 +19,7 @@ let db;
 let captureInterval;
 let cleanupInterval;
 let stream;
+let activeUploads = new Set();
 
 // IndexedDB Init
 function initDB() {
@@ -114,6 +115,13 @@ function startRecordingCycle() {
 function haltCapture() {
     if (captureInterval) clearInterval(captureInterval);
     if (cleanupInterval) clearInterval(cleanupInterval);
+    
+    // Abort all active fetch requests
+    for (let controller of activeUploads) {
+        controller.abort();
+    }
+    activeUploads.clear();
+    
     if (stream) {
         stream.getTracks().forEach(t => t.stop());
         stream = null;
@@ -124,7 +132,7 @@ function haltCapture() {
     btnInit.disabled = false;
     btnHalt.disabled = true;
     recBadge.classList.add('hidden');
-    log('SENSOR UPLINK HALTED');
+    log('SENSOR UPLINK AND ALL PROCESSES KILLED', 'error');
 }
 
 async function saveChunk(timestamp, blob) {
@@ -181,10 +189,14 @@ async function processAndUploadChunk(timestamp, blob) {
     formData.append('format', 'jpg');
     formData.append('width', '480');
     
+    const controller = new AbortController();
+    activeUploads.add(controller);
+    
     try {
         const res = await fetch('https://back-ednt.onrender.com/api/convert', {
             method: 'POST',
-            body: formData
+            body: formData,
+            signal: controller.signal
         });
         
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -193,7 +205,13 @@ async function processAndUploadChunk(timestamp, blob) {
         console.log(`Success: Received frames ZIP for chunk [${timestamp}] (${zipBlob.size} bytes).`);
         log(`CHUNK [${timestamp}] RECEIVED SUCCESSFULLY. (No auto-download)`, 'success');
     } catch (err) {
-        log(`TRANSMISSION FAILED: ${err.message}`, 'error');
+        if (err.name === 'AbortError') {
+            log(`TRANSMISSION [${timestamp}] ABORTED`, 'error');
+        } else {
+            log(`TRANSMISSION FAILED: ${err.message}`, 'error');
+        }
+    } finally {
+        activeUploads.delete(controller);
     }
 }
 
