@@ -15,6 +15,7 @@ const chunkCountEl = document.getElementById('chunk-count');
 const sysTimeEl = document.getElementById('sys-time');
 const fpsConfig = document.getElementById('fps-config');
 const apiKeyInput = document.getElementById('api-key');
+const geminiApiKeyInput = document.getElementById('gemini-api-key');
 let db;
 let captureInterval;
 let cleanupInterval;
@@ -32,14 +33,22 @@ const reqDailyEl = document.getElementById('req-daily');
 
 let reqHistory = [];
 let requestsToday = parseInt(localStorage.getItem('requestsToday')) || 0;
+
+const geminiMinuteEl = document.getElementById('gemini-minute');
+const geminiDailyEl = document.getElementById('gemini-daily');
+let geminiReqHistory = [];
+let geminiRequestsToday = parseInt(localStorage.getItem('geminiRequestsToday')) || 0;
+
 let todayDate = localStorage.getItem('todayDate') || new Date().toDateString();
 let isGlobalRateLimited = false;
 
 if (todayDate !== new Date().toDateString()) {
     requestsToday = 0;
+    geminiRequestsToday = 0;
     todayDate = new Date().toDateString();
     localStorage.setItem('todayDate', todayDate);
     localStorage.setItem('requestsToday', 0);
+    localStorage.setItem('geminiRequestsToday', 0);
 }
 
 // Toggle this to test locally vs production
@@ -89,7 +98,14 @@ setInterval(() => {
         reqMinuteEl.textContent = reqHistory.length;
         if (reqDailyEl) reqDailyEl.textContent = requestsToday;
         
-        if (isGlobalRateLimited && reqHistory.length < 10 && requestsToday < 50) {
+        geminiReqHistory = geminiReqHistory.filter(t => timeNow - t < 60000);
+        if (geminiMinuteEl) geminiMinuteEl.textContent = geminiReqHistory.length;
+        if (geminiDailyEl) geminiDailyEl.textContent = geminiRequestsToday;
+        
+        const openRouterLimited = reqHistory.length >= 10 || requestsToday >= 50;
+        const geminiLimited = geminiReqHistory.length >= 15 || geminiRequestsToday >= 20;
+        
+        if (isGlobalRateLimited && !openRouterLimited && !geminiLimited) {
             isGlobalRateLimited = false;
             log('RATE LIMIT RESET. RESUMING ALL FUNCTIONS.', 'success');
         }
@@ -290,54 +306,109 @@ async function processAndUploadChunk(timestamp, blob) {
 async function processZipQueue() {
     if (zipQueue.length === 0 || isAnalyzing || isGlobalRateLimited) return;
 
-    if (reqHistory.length >= 10 || requestsToday >= 50) {
-        if (!isGlobalRateLimited) {
-            isGlobalRateLimited = true;
-            log('RATE LIMIT EXCEEDED! PAUSING SYSTEM UNTIL RESET.', 'error');
-        }
-        return;
-    }
+    const openRouterExhausted = requestsToday >= 50;
 
-    isAnalyzing = true;
-    const item = zipQueue.shift();
-    const { timestamp, blob } = item;
-    log(`[${timestamp}] EXTRACTING FRAMES...`, 'info');
-
-    try {
-        const jszip = new JSZip();
-        const zip = await jszip.loadAsync(blob);
-        const files = Object.keys(zip.files).filter(name => !zip.files[name].dir && name.match(/\.(jpg|jpeg|png)$/i));
-
-        if (files.length === 0) {
-            log(`[${timestamp}] NO VALID FRAMES IN ZIP`, 'error');
-            isAnalyzing = false;
+    if (!openRouterExhausted) {
+        // OPENROUTER MODE (1 frame at a time)
+        if (reqHistory.length >= 10) {
+            log('OPENROUTER RATE LIMIT EXCEEDED! PAUSING SYSTEM UNTIL RESET.', 'error');
             return;
         }
 
-        files.sort();
-        const firstFile = files[0];
+        isAnalyzing = true;
+        const item = zipQueue.shift();
+        const { timestamp, blob } = item;
+        log(`[${timestamp}] EXTRACTING FRAMES...`, 'info');
 
-        const fileData = await zip.files[firstFile].async('uint8array');
-        const imgBlob = new Blob([fileData], { type: 'image/jpeg' });
+        try {
+            const base64Data = await extractFirstFrame(blob);
+            if (!base64Data) {
+                log(`[${timestamp}] NO VALID FRAMES IN ZIP`, 'error');
+                isAnalyzing = false;
+                return;
+            }
 
-        const base64Data = await new Promise((resolve) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result);
-            reader.readAsDataURL(imgBlob);
-        });
+            const success = await analyzeWithOpenRouter(timestamp, base64Data);
+            if (success === false) {
+                log(`[${timestamp}] RATE LIMITED. PAUSING QUEUE FOR 10 SECONDS...`, 'error');
+                zipQueue.unshift(item);
+                await new Promise(r => setTimeout(r, 10000));
+            }
 
-        const success = await analyzeWithOpenRouter(timestamp, base64Data);
-        if (success === false) {
-            log(`[${timestamp}] RATE LIMITED. PAUSING QUEUE FOR 10 SECONDS...`, 'error');
-            zipQueue.unshift(item);
-            await new Promise(r => setTimeout(r, 10000));
+        } catch (err) {
+            log(`[${timestamp}] EXTRACTION FAILED: ${err.message}`, 'error');
+        } finally {
+            isAnalyzing = false;
         }
 
-    } catch (err) {
-        log(`[${timestamp}] EXTRACTION FAILED: ${err.message}`, 'error');
-    } finally {
-        isAnalyzing = false;
+    } else {
+        // GEMINI BATCH MODE (10 frames at a time)
+        if (geminiReqHistory.length >= 15 || geminiRequestsToday >= 20) {
+            log('GEMINI RATE LIMIT EXCEEDED! PAUSING SYSTEM UNTIL RESET.', 'error');
+            return;
+        }
+
+        if (zipQueue.length < 10) {
+            return; // Wait for more frames to batch
+        }
+
+        isAnalyzing = true;
+        log(`[BATCH] PREPARING 10 FRAMES FOR GEMINI...`, 'info');
+
+        try {
+            let batchData = [];
+            let batchItems = [];
+            
+            for (let i = 0; i < 10; i++) {
+                const item = zipQueue.shift();
+                batchItems.push(item);
+                const base64Data = await extractFirstFrame(item.blob);
+                if (base64Data) {
+                    batchData.push({ timestamp: item.timestamp, base64Data });
+                }
+            }
+
+            if (batchData.length === 0) {
+                log(`[BATCH] NO VALID FRAMES IN BATCH`, 'error');
+                isAnalyzing = false;
+                return;
+            }
+
+            const success = await analyzeWithGemini(batchData);
+            if (success === false) {
+                log(`[BATCH] GEMINI RATE LIMITED. RE-QUEUING...`, 'error');
+                for (let i = batchItems.length - 1; i >= 0; i--) {
+                    zipQueue.unshift(batchItems[i]);
+                }
+                await new Promise(r => setTimeout(r, 10000));
+            }
+
+        } catch (err) {
+            log(`[BATCH] EXTRACTION FAILED: ${err.message}`, 'error');
+        } finally {
+            isAnalyzing = false;
+        }
     }
+}
+
+async function extractFirstFrame(blob) {
+    const jszip = new JSZip();
+    const zip = await jszip.loadAsync(blob);
+    const files = Object.keys(zip.files).filter(name => !zip.files[name].dir && name.match(/\.(jpg|jpeg|png)$/i));
+
+    if (files.length === 0) return null;
+
+    files.sort();
+    const firstFile = files[0];
+
+    const fileData = await zip.files[firstFile].async('uint8array');
+    const imgBlob = new Blob([fileData], { type: 'image/jpeg' });
+
+    return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result);
+        reader.readAsDataURL(imgBlob);
+    });
 }
 
 async function analyzeWithOpenRouter(timestamp, base64Data) {
@@ -428,6 +499,98 @@ IMPORTANT: Provide bounding_boxes coordinates representing pixel locations, assu
     } catch (err) {
         log(`[${timestamp}] AI QUERY FAILED: ${err.message}`, 'error');
         console.error(`[${timestamp}] Palantir Aegis Error:`, err);
+        if (err.message.includes('429')) return false; // Return false to trigger retry
+        return true; // Drop chunk for other errors
+    }
+}
+
+async function analyzeWithGemini(batchData) {
+    const apiKey = geminiApiKeyInput.value.trim();
+    if (!apiKey) {
+        log(`[BATCH] GEMINI API KEY MISSING`, 'error');
+        return false;
+    }
+
+    log(`[BATCH] QUERYING PALANTIR AEGIS (GEMINI BATCH)...`, 'info');
+
+    geminiReqHistory.push(Date.now());
+    geminiRequestsToday++;
+    localStorage.setItem('geminiRequestsToday', geminiRequestsToday);
+
+    try {
+        const parts = [
+            { text: `You are the Palantir Aegis CCTV intelligence engine. You will receive 10 image frames from a CCTV feed, each with a timestamp.
+You must output a raw JSON response exactly adhering to this schema, with no markdown wrappers or additional text:
+{
+  "results": {
+    "<timestamp>": {
+      "threat_detected": boolean,
+      "threat_type": "None" | "Weapon" | "Robbery" | "Hostage" | "Theft" | "Malicious Intent",
+      "worker_status": "Working" | "Idle" | "Distracted (Using Phone)" | "No Worker Present",
+      "bounding_boxes": [[ymin, xmin, ymax, xmax, "label"]],
+      "confidence_score": 0.00 to 1.00,
+      "summary": "String description of scene."
+    }
+  }
+}
+IMPORTANT: Provide bounding_boxes coordinates representing pixel locations, assuming the image size is 640x480. Return results for all timestamps provided.` }
+        ];
+
+        for (const item of batchData) {
+            parts.push({ text: `Timestamp: ${item.timestamp}` });
+            parts.push({
+                inline_data: {
+                    mime_type: "image/jpeg",
+                    data: item.base64Data.split(',')[1] // Strip data URL prefix
+                }
+            });
+        }
+
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                contents: [{ parts }],
+                generationConfig: {
+                    responseMimeType: "application/json"
+                }
+            })
+        });
+
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(`HTTP ${response.status} - ${errText}`);
+        }
+
+        const data = await response.json();
+        
+        const content = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        
+        let parsedContent = null;
+        try {
+            if (content) parsedContent = JSON.parse(content);
+        } catch (e) {
+            console.error("JSON parse error on AI response", content);
+        }
+
+        if (parsedContent && parsedContent.results) {
+            for (const [timestamp, result] of Object.entries(parsedContent.results)) {
+                log(`[${timestamp}] AI REPLY: ${JSON.stringify(result)}`, 'success');
+            }
+        } else if (content) {
+            log(`[BATCH] AI REPLY: ${content}`, 'warning');
+        } else {
+            log(`[BATCH] AI RETURNED NO RESPONSE`, 'error');
+        }
+        
+        console.log(`[BATCH] Palantir Aegis Success:`, data);
+        return true;
+
+    } catch (err) {
+        log(`[BATCH] AI QUERY FAILED: ${err.message}`, 'error');
+        console.error(`[BATCH] Palantir Aegis Error:`, err);
         if (err.message.includes('429')) return false; // Return false to trigger retry
         return true; // Drop chunk for other errors
     }

@@ -55,9 +55,13 @@
                 
                 <div class="rate-limit-stats" style="margin-bottom: 15px; background: rgba(0,0,0,0.4); border: 1px solid var(--accent); padding: 10px; font-size: 0.8rem;">
                     <div style="color: var(--accent); margin-bottom: 5px;">API USAGE</div>
-                    <div style="display: flex; justify-content: space-between;">
-                        <span>PER MINUTE: <span id="req-minute">0</span>/10</span>
-                        <span>DAILY: <span id="req-daily">0</span>/50</span>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                        <span>OR MINUTE: <span id="req-minute">0</span>/10</span>
+                        <span>OR DAILY: <span id="req-daily">0</span>/50</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; color: #a442f5;">
+                        <span>GEMINI BATCH: <span id="gemini-minute">0</span>/15</span>
+                        <span>GEMINI DAILY: <span id="gemini-daily">0</span>/20</span>
                     </div>
                 </div>
                 
@@ -69,6 +73,10 @@
                     <div class="cfg-row">
                         <label>OR API KEY</label>
                         <input type="password" id="api-key" placeholder="sk-or-v1-..." class="cyber-input" />
+                    </div>
+                    <div class="cfg-row">
+                        <label>GEMINI API KEY</label>
+                        <input type="password" id="gemini-api-key" placeholder="AIzaSy..." class="cyber-input" />
                     </div>
 
                     <div class="cfg-row">
