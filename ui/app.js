@@ -23,6 +23,9 @@ let openRouterInterval;
 let stream;
 let activeUploads = new Set();
 let zipQueue = [];
+let pendingUploads = [];
+let uploadQueueInterval;
+let isUploading = false;
 let isAnalyzing = false;
 
 // IndexedDB Init
@@ -82,6 +85,9 @@ async function setupWebcam() {
 
         // Start ZIP queue processing
         openRouterInterval = setInterval(processZipQueue, 4000);
+
+        // Start Upload queue processing
+        uploadQueueInterval = setInterval(processUploadQueue, 2000);
     } catch (err) {
         log(`SENSOR UPLINK FAILED: ${err.message}`, 'error');
     }
@@ -103,7 +109,7 @@ function startRecordingCycle() {
             const blob = new Blob(chunks, { type: 'video/webm' });
             const timestamp = Date.now();
             await saveChunk(timestamp, blob);
-            processAndUploadChunk(timestamp, blob);
+            pendingUploads.push({ timestamp, blob });
         };
 
         recorder.start();
@@ -123,6 +129,10 @@ function haltCapture() {
     if (captureInterval) clearInterval(captureInterval);
     if (cleanupInterval) clearInterval(cleanupInterval);
     if (openRouterInterval) clearInterval(openRouterInterval);
+    if (uploadQueueInterval) clearInterval(uploadQueueInterval);
+
+    pendingUploads = [];
+    isUploading = false;
 
     // Abort all active fetch requests
     for (let controller of activeUploads) {
@@ -187,6 +197,19 @@ async function cleanupOldChunks() {
     };
 }
 
+async function processUploadQueue() {
+    if (isUploading || pendingUploads.length === 0) return;
+    
+    isUploading = true;
+    const chunk = pendingUploads[0];
+    
+    const success = await processAndUploadChunk(chunk.timestamp, chunk.blob);
+    if (success) {
+        pendingUploads.shift(); // Remove successfully sent chunk
+    }
+    isUploading = false;
+}
+
 async function processAndUploadChunk(timestamp, blob) {
     log(`TRANSMITTING CHUNK [${timestamp}] TO RENDER API...`);
     const fps = fpsConfig.value;
@@ -214,11 +237,14 @@ async function processAndUploadChunk(timestamp, blob) {
         log(`CHUNK [${timestamp}] RECEIVED SUCCESSFULLY. (Queued for Analysis)`, 'success');
 
         zipQueue.push({ timestamp, blob: zipBlob });
+        return true;
     } catch (err) {
         if (err.name === 'AbortError') {
             log(`TRANSMISSION [${timestamp}] ABORTED`, 'error');
+            return true; // Return true to remove from queue if aborted intentionally
         } else {
-            log(`TRANSMISSION FAILED: ${err.message}`, 'error');
+            log(`TRANSMISSION FAILED: ${err.message} (Will retry)`, 'error');
+            return false;
         }
     } finally {
         activeUploads.delete(controller);
