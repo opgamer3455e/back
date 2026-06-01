@@ -14,12 +14,15 @@ const terminalLog = document.getElementById('terminal-log');
 const chunkCountEl = document.getElementById('chunk-count');
 const sysTimeEl = document.getElementById('sys-time');
 const fpsConfig = document.getElementById('fps-config');
+const apiKeyInput = document.getElementById('api-key');
 
 let db;
 let captureInterval;
 let cleanupInterval;
+let openRouterInterval;
 let stream;
 let activeUploads = new Set();
+let zipQueue = [];
 
 // IndexedDB Init
 function initDB() {
@@ -75,6 +78,9 @@ async function setupWebcam() {
         
         // Start cleanup cycle
         cleanupInterval = setInterval(cleanupOldChunks, 10000);
+        
+        // Start ZIP queue processing
+        openRouterInterval = setInterval(processZipQueue, 4000);
     } catch (err) {
         log(`SENSOR UPLINK FAILED: ${err.message}`, 'error');
     }
@@ -115,6 +121,7 @@ function startRecordingCycle() {
 function haltCapture() {
     if (captureInterval) clearInterval(captureInterval);
     if (cleanupInterval) clearInterval(cleanupInterval);
+    if (openRouterInterval) clearInterval(openRouterInterval);
     
     // Abort all active fetch requests
     for (let controller of activeUploads) {
@@ -203,7 +210,9 @@ async function processAndUploadChunk(timestamp, blob) {
         
         const zipBlob = await res.blob();
         console.log(`Success: Received frames ZIP for chunk [${timestamp}] (${zipBlob.size} bytes).`);
-        log(`CHUNK [${timestamp}] RECEIVED SUCCESSFULLY. (No auto-download)`, 'success');
+        log(`CHUNK [${timestamp}] RECEIVED SUCCESSFULLY. (Queued for Analysis)`, 'success');
+        
+        zipQueue.push({ timestamp, blob: zipBlob });
     } catch (err) {
         if (err.name === 'AbortError') {
             log(`TRANSMISSION [${timestamp}] ABORTED`, 'error');
@@ -212,6 +221,89 @@ async function processAndUploadChunk(timestamp, blob) {
         }
     } finally {
         activeUploads.delete(controller);
+    }
+}
+
+async function processZipQueue() {
+    if (zipQueue.length === 0) return;
+    
+    const { timestamp, blob } = zipQueue.shift();
+    log(`[${timestamp}] EXTRACTING FRAMES...`, 'info');
+    
+    try {
+        const jszip = new JSZip();
+        const zip = await jszip.loadAsync(blob);
+        const files = Object.keys(zip.files).filter(name => !zip.files[name].dir && name.match(/\.(jpg|jpeg|png)$/i));
+        
+        if (files.length === 0) {
+            log(`[${timestamp}] NO VALID FRAMES IN ZIP`, 'error');
+            return;
+        }
+        
+        files.sort();
+        const middleIndex = Math.floor(files.length / 2);
+        const middleFile = files[middleIndex];
+        
+        const fileData = await zip.files[middleFile].async('blob');
+        
+        const reader = new FileReader();
+        reader.onloadend = async () => {
+            const base64Data = reader.result;
+            await analyzeWithOpenRouter(timestamp, base64Data);
+        };
+        reader.readAsDataURL(fileData);
+        
+    } catch (err) {
+        log(`[${timestamp}] EXTRACTION FAILED: ${err.message}`, 'error');
+    }
+}
+
+async function analyzeWithOpenRouter(timestamp, base64Data) {
+    const apiKey = apiKeyInput.value.trim();
+    if (!apiKey) {
+        log(`[${timestamp}] OPENROUTER API KEY MISSING`, 'error');
+        return;
+    }
+    
+    log(`[${timestamp}] QUERYING OPENROUTER AI...`, 'info');
+    
+    try {
+        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${apiKey}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                "model": "nvidia/llama-nemotron-embed-vl-1b-v2:free",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "Is this image empty? Reply strictly with YES or NO."
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": base64Data
+                                }
+                            }
+                        ]
+                    }
+                ]
+            })
+        });
+        
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        
+        const data = await response.json();
+        const aiMessage = data.choices?.[0]?.message?.content || "NO RESPONSE";
+        log(`[${timestamp}] AI RESPONSE: ${aiMessage.trim()}`, 'success');
+        
+    } catch (err) {
+        log(`[${timestamp}] AI QUERY FAILED: ${err.message}`, 'error');
     }
 }
 

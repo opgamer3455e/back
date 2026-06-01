@@ -257,3 +257,16 @@ select {
     border: 1px solid var(--dim);
     font-family: var(--font-mono);
 }
+
+.cyber-input {
+    background: var(--bg);
+    color: var(--amber);
+    border: 1px solid var(--dim);
+    font-family: var(--font-mono);
+    padding: 0.2rem;
+    width: 150px;
+}
+.cyber-input:focus {
+    outline: none;
+    border-color: var(--amber);
+}
