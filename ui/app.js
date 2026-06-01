@@ -244,14 +244,15 @@ async function processZipQueue() {
         const middleIndex = Math.floor(files.length / 2);
         const middleFile = files[middleIndex];
         
-        const fileData = await zip.files[middleFile].async('blob');
+        const fileData = await zip.files[middleFile].async('uint8array');
+        const blob = new Blob([fileData], { type: 'image/jpeg' });
         
         const reader = new FileReader();
         reader.onloadend = async () => {
             const base64Data = reader.result;
             await analyzeWithOpenRouter(timestamp, base64Data);
         };
-        reader.readAsDataURL(fileData);
+        reader.readAsDataURL(blob);
         
     } catch (err) {
         log(`[${timestamp}] EXTRACTION FAILED: ${err.message}`, 'error');
@@ -296,7 +297,10 @@ async function analyzeWithOpenRouter(timestamp, base64Data) {
             })
         });
         
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        if (!response.ok) {
+            const errData = await response.text();
+            throw new Error(`HTTP ${response.status} - ${errData}`);
+        }
         
         const data = await response.json();
         const aiMessage = data.choices?.[0]?.message?.content || "NO RESPONSE";
