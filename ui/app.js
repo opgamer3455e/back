@@ -23,6 +23,7 @@ let openRouterInterval;
 let stream;
 let activeUploads = new Set();
 let zipQueue = [];
+let isAnalyzing = false;
 
 // IndexedDB Init
 function initDB() {
@@ -225,8 +226,9 @@ async function processAndUploadChunk(timestamp, blob) {
 }
 
 async function processZipQueue() {
-    if (zipQueue.length === 0) return;
+    if (zipQueue.length === 0 || isAnalyzing) return;
     
+    isAnalyzing = true;
     const { timestamp, blob } = zipQueue.shift();
     log(`[${timestamp}] EXTRACTING FRAMES...`, 'info');
     
@@ -237,25 +239,28 @@ async function processZipQueue() {
         
         if (files.length === 0) {
             log(`[${timestamp}] NO VALID FRAMES IN ZIP`, 'error');
+            isAnalyzing = false;
             return;
         }
         
         files.sort();
-        const middleIndex = Math.floor(files.length / 2);
-        const middleFile = files[middleIndex];
+        const firstFile = files[0];
         
-        const fileData = await zip.files[middleFile].async('uint8array');
-        const blob = new Blob([fileData], { type: 'image/jpeg' });
+        const fileData = await zip.files[firstFile].async('uint8array');
+        const imgBlob = new Blob([fileData], { type: 'image/jpeg' });
         
-        const reader = new FileReader();
-        reader.onloadend = async () => {
-            const base64Data = reader.result;
-            await analyzeWithOpenRouter(timestamp, base64Data);
-        };
-        reader.readAsDataURL(blob);
+        const base64Data = await new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.readAsDataURL(imgBlob);
+        });
+        
+        await analyzeWithOpenRouter(timestamp, base64Data);
         
     } catch (err) {
         log(`[${timestamp}] EXTRACTION FAILED: ${err.message}`, 'error');
+    } finally {
+        isAnalyzing = false;
     }
 }
 
@@ -298,16 +303,25 @@ async function analyzeWithOpenRouter(timestamp, base64Data) {
         });
         
         if (!response.ok) {
-            const errData = await response.text();
-            throw new Error(`HTTP ${response.status} - ${errData}`);
+            const errText = await response.text();
+            let errMsg = errText;
+            try {
+                const parsed = JSON.parse(errText);
+                if (parsed.error && parsed.error.message) {
+                    errMsg = parsed.error.message;
+                }
+            } catch (e) {}
+            throw new Error(`HTTP ${response.status} - ${errMsg}`);
         }
         
         const data = await response.json();
         const aiMessage = data.choices?.[0]?.message?.content || "NO RESPONSE";
         log(`[${timestamp}] AI RESPONSE: ${aiMessage.trim()}`, 'success');
+        console.log(`[${timestamp}] OpenRouter Success:`, data);
         
     } catch (err) {
         log(`[${timestamp}] AI QUERY FAILED: ${err.message}`, 'error');
+        console.error(`[${timestamp}] OpenRouter Error:`, err);
     }
 }
 
