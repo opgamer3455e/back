@@ -55,6 +55,10 @@ setInterval(() => {
 // Core Logic
 async function setupWebcam() {
     try {
+        log('TRANSMITTING WAKE-UP PING TO SERVER...');
+        // Fire-and-forget empty request to wake up the Render instance
+        fetch('https://back-ednt.onrender.com/').catch(err => log(`PING ERROR: ${err.message}`, 'error'));
+        
         log('REQUESTING OPTIC SENSOR UPLINK...');
         stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
         videoEl.srcObject = stream;
