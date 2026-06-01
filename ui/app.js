@@ -271,10 +271,10 @@ async function analyzeWithOpenRouter(timestamp, base64Data) {
         return;
     }
     
-    log(`[${timestamp}] QUERYING OPENROUTER AI...`, 'info');
+    log(`[${timestamp}] QUERYING OPENROUTER EMBEDDINGS...`, 'info');
     
     try {
-        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        const response = await fetch("https://openrouter.ai/api/v1/embeddings", {
             method: "POST",
             headers: {
                 "Authorization": `Bearer ${apiKey}`,
@@ -282,23 +282,23 @@ async function analyzeWithOpenRouter(timestamp, base64Data) {
             },
             body: JSON.stringify({
                 "model": "nvidia/llama-nemotron-embed-vl-1b-v2:free",
-                "messages": [
+                "input": [
                     {
-                        "role": "user",
                         "content": [
-                            {
-                                "type": "text",
-                                "text": "Is this image empty? Reply strictly with YES or NO."
+                            { 
+                                "type": "text", 
+                                "text": "Is this image empty?" 
                             },
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": base64Data
-                                }
+                            { 
+                                "type": "image_url", 
+                                "image_url": { 
+                                    "url": base64Data 
+                                } 
                             }
                         ]
                     }
-                ]
+                ],
+                "encoding_format": "float"
             })
         });
         
@@ -315,8 +315,15 @@ async function analyzeWithOpenRouter(timestamp, base64Data) {
         }
         
         const data = await response.json();
-        const aiMessage = data.choices?.[0]?.message?.content || "NO RESPONSE";
-        log(`[${timestamp}] AI RESPONSE: ${aiMessage.trim()}`, 'success');
+        
+        // Embeddings models return arrays of floats, not text answers
+        const embedding = data.data?.[0]?.embedding;
+        if (embedding) {
+            const slice = embedding.slice(0, 5).map(n => n.toFixed(4));
+            log(`[${timestamp}] VECTOR: [${slice.join(', ')}...]`, 'success');
+        } else {
+            log(`[${timestamp}] AI RETURNED NO EMBEDDING`, 'error');
+        }
         console.log(`[${timestamp}] OpenRouter Success:`, data);
         
     } catch (err) {
