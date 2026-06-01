@@ -14,6 +14,7 @@ const terminalLog = document.getElementById('terminal-log');
 const chunkCountEl = document.getElementById('chunk-count');
 const sysTimeEl = document.getElementById('sys-time');
 const fpsConfig = document.getElementById('fps-config');
+const apiKeyInput = document.getElementById('api-key');
 let db;
 let captureInterval;
 let cleanupInterval;
@@ -305,16 +306,49 @@ async function processZipQueue() {
 }
 
 async function analyzeWithOpenRouter(timestamp, base64Data) {
-    log(`[${timestamp}] QUERYING PALANTIR AEGIS (BACKEND)...`, 'info');
+    const apiKey = apiKeyInput.value.trim();
+    if (!apiKey) {
+        log(`[${timestamp}] OPENROUTER API KEY MISSING`, 'error');
+        return false;
+    }
+
+    log(`[${timestamp}] QUERYING PALANTIR AEGIS (OPENROUTER)...`, 'info');
 
     try {
-        const response = await fetch(`${API_BASE}/api/analyze`, {
+        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
             method: "POST",
             headers: {
-                "Content-Type": "application/json"
+                "Authorization": `Bearer ${apiKey}`,
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://ai.studio",
+                "X-Title": "Palantir Aegis Node"
             },
             body: JSON.stringify({
-                image: base64Data
+                model: "nvidia/nemotron-nano-12b-v2-vl:free",
+                response_format: { type: "json_object" },
+                messages: [
+                    {
+                        role: "system",
+                        content: `You are the Palantir Aegis CCTV intelligence engine. You will receive an image frame from a CCTV feed. 
+You must output a raw JSON response exactly adhering to this schema, with no markdown wrappers or additional text:
+{
+  "threat_detected": boolean,
+  "threat_type": "None" | "Weapon" | "Robbery" | "Hostage" | "Theft" | "Malicious Intent",
+  "worker_status": "Working" | "Idle" | "Distracted (Using Phone)" | "No Worker Present",
+  "bounding_boxes": [[ymin, xmin, ymax, xmax, "label"]],
+  "confidence_score": 0.00 to 1.00,
+  "summary": "String description of scene."
+}
+IMPORTANT: Provide bounding_boxes coordinates representing pixel locations, assuming the image size is 640x480.`
+                    },
+                    {
+                        role: "user",
+                        content: [
+                            { type: "text", text: "Analyze this CCTV frame:" },
+                            { type: "image_url", image_url: { url: base64Data } }
+                        ]
+                    }
+                ]
             })
         });
 
@@ -334,8 +368,18 @@ async function analyzeWithOpenRouter(timestamp, base64Data) {
 
         const data = await response.json();
 
-        if (data) {
-            log(`[${timestamp}] AI REPLY: ${JSON.stringify(data)}`, 'success');
+        const content = data.choices?.[0]?.message?.content;
+        let parsedContent = null;
+        try {
+            if (content) parsedContent = JSON.parse(content);
+        } catch (e) {
+            console.error("JSON parse error on AI response", content);
+        }
+
+        if (parsedContent) {
+            log(`[${timestamp}] AI REPLY: ${JSON.stringify(parsedContent)}`, 'success');
+        } else if (content) {
+            log(`[${timestamp}] AI REPLY: ${content}`, 'warning');
         } else {
             log(`[${timestamp}] AI RETURNED NO RESPONSE`, 'error');
         }
