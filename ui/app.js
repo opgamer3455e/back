@@ -14,8 +14,6 @@ const terminalLog = document.getElementById('terminal-log');
 const chunkCountEl = document.getElementById('chunk-count');
 const sysTimeEl = document.getElementById('sys-time');
 const fpsConfig = document.getElementById('fps-config');
-const apiKeyInput = document.getElementById('api-key');
-
 let db;
 let captureInterval;
 let cleanupInterval;
@@ -336,7 +334,7 @@ async function analyzeWithOpenRouter(timestamp, base64Data) {
     } catch (err) {
         log(`[${timestamp}] AI QUERY FAILED: ${err.message}`, 'error');
         console.error(`[${timestamp}] Palantir Aegis Error:`, err);
-    }
+                                     }
 }
 
 // Listeners
