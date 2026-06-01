@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
@@ -16,7 +17,7 @@ app.use(cors({
     allowedHeaders: ['Content-Type', 'Authorization', 'Bypass-Tunnel-Reminder'],
     exposedHeaders: ['Content-Disposition']
 }));
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
 
 const tempDir = path.join(__dirname, 'temp');
 if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
@@ -104,6 +105,78 @@ app.post('/api/convert', upload.single('video'), (req, res) => {
         archive.directory(outputDir, false);
         archive.finalize();
     });
+});
+
+app.post("/api/analyze", async (req, res) => {
+    const apiKey = process.env.OPENROUTER_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ error: "OPENROUTER_API_KEY is not set in environment variables." });
+    }
+
+    try {
+      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": process.env.APP_URL || "https://ai.studio",
+          "X-Title": "Palantir Aegis Node",
+        },
+        body: JSON.stringify({
+          model: "nvidia/nemotron-nano-12b-v2-vl:free",
+          response_format: { type: "json_object" },
+          messages: [
+            {
+               role: "system",
+               content: `You are the Palantir Aegis CCTV intelligence engine. You will receive an image frame from a CCTV feed. 
+You must output a raw JSON response exactly adhering to this schema, with no markdown wrappers or additional text:
+{
+  "threat_detected": boolean,
+  "threat_type": "None" | "Weapon" | "Robbery" | "Hostage" | "Theft" | "Malicious Intent",
+  "worker_status": "Working" | "Idle" | "Distracted (Using Phone)" | "No Worker Present",
+  "bounding_boxes": [[ymin, xmin, ymax, xmax, "label"]],
+  "confidence_score": 0.00 to 1.00,
+  "summary": "String description of scene."
+}
+IMPORTANT: Provide bounding_boxes coordinates representing pixel locations, assuming the image size is 640x480.
+`
+            },
+            {
+               role: "user",
+               content: req.body.image ? [
+                 { type: "text", text: "Analyze this CCTV frame:" },
+                 { type: "image_url", image_url: { url: req.body.image } }
+               ] : `Analyze this hypothetical CCTV scene: ${req.body.scene || "A worker in a warehouse is looking at his phone instead of operating the forklift."}`
+            }
+          ]
+        }),
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        console.error("OpenRouter API error:", errText);
+        return res.status(response.status).json({ error: "OpenRouter API failed", details: errText });
+      }
+
+      const data = await response.json();
+      
+      if (!data || !data.choices || !data.choices[0]) {
+        console.error("Unexpected OpenRouter response:", data);
+        return res.status(500).json({ error: "Invalid response from AI model", details: data });
+      }
+
+      const content = data.choices[0]?.message?.content;
+      try {
+        const parsedContent = JSON.parse(content);
+        res.json(parsedContent);
+      } catch (parseError) {
+        console.error("JSON parse error:", parseError, "Content was:", content);
+        res.status(500).json({ error: "Failed to parse AI response as JSON", details: content });
+      }
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: "Internal server error connecting to AI.", details: e.message });
+    }
 });
 
 app.listen(port, () => {

@@ -291,40 +291,16 @@ async function processZipQueue() {
 }
 
 async function analyzeWithOpenRouter(timestamp, base64Data) {
-    const apiKey = apiKeyInput.value.trim();
-    if (!apiKey) {
-        log(`[${timestamp}] OPENROUTER API KEY MISSING`, 'error');
-        return;
-    }
-
-    log(`[${timestamp}] QUERYING OPENROUTER AI...`, 'info');
+    log(`[${timestamp}] QUERYING PALANTIR AEGIS (BACKEND)...`, 'info');
 
     try {
-        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        const response = await fetch("https://back-ednt.onrender.com/api/analyze", {
             method: "POST",
             headers: {
-                "Authorization": `Bearer ${apiKey}`,
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
-                "model": "nvidia/nemotron-nano-12b-v2-vl:free",
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": "Is this image empty?"
-                            },
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": base64Data
-                                }
-                            }
-                        ]
-                    }
-                ]
+                image: base64Data
             })
         });
 
@@ -335,6 +311,8 @@ async function analyzeWithOpenRouter(timestamp, base64Data) {
                 const parsed = JSON.parse(errText);
                 if (parsed.error && parsed.error.message) {
                     errMsg = parsed.error.message;
+                } else if (parsed.error) {
+                    errMsg = parsed.error;
                 }
             } catch (e) { }
             throw new Error(`HTTP ${response.status} - ${errMsg}`);
@@ -342,17 +320,16 @@ async function analyzeWithOpenRouter(timestamp, base64Data) {
 
         const data = await response.json();
 
-        const reply = data.choices?.[0]?.message?.content;
-        if (reply) {
-            log(`[${timestamp}] AI REPLY: ${reply}`, 'success');
+        if (data) {
+            log(`[${timestamp}] AI REPLY: ${JSON.stringify(data)}`, 'success');
         } else {
             log(`[${timestamp}] AI RETURNED NO RESPONSE`, 'error');
         }
-        console.log(`[${timestamp}] OpenRouter Success:`, data);
+        console.log(`[${timestamp}] Palantir Aegis Success:`, data);
 
     } catch (err) {
         log(`[${timestamp}] AI QUERY FAILED: ${err.message}`, 'error');
-        console.error(`[${timestamp}] OpenRouter Error:`, err);
+        console.error(`[${timestamp}] Palantir Aegis Error:`, err);
     }
 }
 
