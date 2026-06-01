@@ -27,6 +27,21 @@ let uploadQueueInterval;
 let isUploading = false;
 let isAnalyzing = false;
 
+const reqMinuteEl = document.getElementById('req-minute');
+const reqDailyEl = document.getElementById('req-daily');
+
+let reqHistory = [];
+let requestsToday = parseInt(localStorage.getItem('requestsToday')) || 0;
+let todayDate = localStorage.getItem('todayDate') || new Date().toDateString();
+let isGlobalRateLimited = false;
+
+if (todayDate !== new Date().toDateString()) {
+    requestsToday = 0;
+    todayDate = new Date().toDateString();
+    localStorage.setItem('todayDate', todayDate);
+    localStorage.setItem('requestsToday', 0);
+}
+
 // Toggle this to test locally vs production
 const API_BASE = 'http://localhost:3000';
 // const API_BASE = 'https://back-ednt.onrender.com';
@@ -67,6 +82,18 @@ function log(msg, type = 'info') {
 setInterval(() => {
     const now = new Date();
     sysTimeEl.textContent = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}:${String(now.getMilliseconds()).padStart(3, '0')}`;
+    
+    if (reqMinuteEl) {
+        const timeNow = Date.now();
+        reqHistory = reqHistory.filter(t => timeNow - t < 60000);
+        reqMinuteEl.textContent = reqHistory.length;
+        if (reqDailyEl) reqDailyEl.textContent = requestsToday;
+        
+        if (isGlobalRateLimited && reqHistory.length < 10 && requestsToday < 200) {
+            isGlobalRateLimited = false;
+            log('RATE LIMIT RESET. RESUMING ALL FUNCTIONS.', 'success');
+        }
+    }
 }, 50);
 
 // Core Logic
@@ -261,7 +288,15 @@ async function processAndUploadChunk(timestamp, blob) {
 }
 
 async function processZipQueue() {
-    if (zipQueue.length === 0 || isAnalyzing) return;
+    if (zipQueue.length === 0 || isAnalyzing || isGlobalRateLimited) return;
+
+    if (reqHistory.length >= 10 || requestsToday >= 200) {
+        if (!isGlobalRateLimited) {
+            isGlobalRateLimited = true;
+            log('RATE LIMIT EXCEEDED! PAUSING SYSTEM UNTIL RESET.', 'error');
+        }
+        return;
+    }
 
     isAnalyzing = true;
     const item = zipQueue.shift();
@@ -313,6 +348,10 @@ async function analyzeWithOpenRouter(timestamp, base64Data) {
     }
 
     log(`[${timestamp}] QUERYING PALANTIR AEGIS (OPENROUTER)...`, 'info');
+
+    reqHistory.push(Date.now());
+    requestsToday++;
+    localStorage.setItem('requestsToday', requestsToday);
 
     try {
         const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
