@@ -63,23 +63,23 @@ async function setupWebcam() {
         log('TRANSMITTING WAKE-UP PING TO SERVER...');
         // Fire-and-forget empty request to wake up the Render instance
         fetch('https://back-ednt.onrender.com/').catch(err => log(`PING ERROR: ${err.message}`, 'error'));
-        
+
         log('REQUESTING OPTIC SENSOR UPLINK...');
         stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
         videoEl.srcObject = stream;
         camStatus.textContent = 'ONLINE';
         camStatus.classList.add('online');
         log('SENSOR INITIATED SUCCESSFULLY', 'success');
-        
+
         btnInit.classList.add('hidden');
         btnHalt.classList.remove('hidden');
         recBadge.classList.remove('hidden');
 
         startRecordingCycle();
-        
+
         // Start cleanup cycle
         cleanupInterval = setInterval(cleanupOldChunks, 10000);
-        
+
         // Start ZIP queue processing
         openRouterInterval = setInterval(processZipQueue, 4000);
     } catch (err) {
@@ -89,23 +89,23 @@ async function setupWebcam() {
 
 function startRecordingCycle() {
     log(`COMMENCING ${CHUNK_DURATION_MS}ms RECORDING CYCLE`);
-    
+
     function recordChunk() {
         if (!stream) return;
         const recorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
         const chunks = [];
-        
+
         recorder.ondataavailable = e => {
             if (e.data.size > 0) chunks.push(e.data);
         };
-        
+
         recorder.onstop = async () => {
             const blob = new Blob(chunks, { type: 'video/webm' });
             const timestamp = Date.now();
             await saveChunk(timestamp, blob);
             processAndUploadChunk(timestamp, blob);
         };
-        
+
         recorder.start();
         setTimeout(() => {
             if (recorder.state === 'recording') {
@@ -113,7 +113,7 @@ function startRecordingCycle() {
             }
         }, CHUNK_DURATION_MS);
     }
-    
+
     // Initial call
     recordChunk();
     captureInterval = setInterval(recordChunk, CHUNK_DURATION_MS);
@@ -123,13 +123,13 @@ function haltCapture() {
     if (captureInterval) clearInterval(captureInterval);
     if (cleanupInterval) clearInterval(cleanupInterval);
     if (openRouterInterval) clearInterval(openRouterInterval);
-    
+
     // Abort all active fetch requests
     for (let controller of activeUploads) {
         controller.abort();
     }
     activeUploads.clear();
-    
+
     if (stream) {
         stream.getTracks().forEach(t => t.stop());
         stream = null;
@@ -170,7 +170,7 @@ async function cleanupOldChunks() {
     const tx = db.transaction(STORE_NAME, 'readwrite');
     const store = tx.objectStore(STORE_NAME);
     const req = store.openCursor();
-    
+
     let deleted = 0;
     req.onsuccess = (e) => {
         const cursor = e.target.result;
@@ -190,29 +190,29 @@ async function cleanupOldChunks() {
 async function processAndUploadChunk(timestamp, blob) {
     log(`TRANSMITTING CHUNK [${timestamp}] TO RENDER API...`);
     const fps = fpsConfig.value;
-    
+
     const formData = new FormData();
     formData.append('video', blob, `chunk-${timestamp}.webm`);
     formData.append('fps', fps);
     formData.append('format', 'jpg');
     formData.append('width', '480');
-    
+
     const controller = new AbortController();
     activeUploads.add(controller);
-    
+
     try {
         const res = await fetch('https://back-ednt.onrender.com/api/convert', {
             method: 'POST',
             body: formData,
             signal: controller.signal
         });
-        
+
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        
+
         const zipBlob = await res.blob();
         console.log(`Success: Received frames ZIP for chunk [${timestamp}] (${zipBlob.size} bytes).`);
         log(`CHUNK [${timestamp}] RECEIVED SUCCESSFULLY. (Queued for Analysis)`, 'success');
-        
+
         zipQueue.push({ timestamp, blob: zipBlob });
     } catch (err) {
         if (err.name === 'AbortError') {
@@ -227,36 +227,36 @@ async function processAndUploadChunk(timestamp, blob) {
 
 async function processZipQueue() {
     if (zipQueue.length === 0 || isAnalyzing) return;
-    
+
     isAnalyzing = true;
     const { timestamp, blob } = zipQueue.shift();
     log(`[${timestamp}] EXTRACTING FRAMES...`, 'info');
-    
+
     try {
         const jszip = new JSZip();
         const zip = await jszip.loadAsync(blob);
         const files = Object.keys(zip.files).filter(name => !zip.files[name].dir && name.match(/\.(jpg|jpeg|png)$/i));
-        
+
         if (files.length === 0) {
             log(`[${timestamp}] NO VALID FRAMES IN ZIP`, 'error');
             isAnalyzing = false;
             return;
         }
-        
+
         files.sort();
         const firstFile = files[0];
-        
+
         const fileData = await zip.files[firstFile].async('uint8array');
         const imgBlob = new Blob([fileData], { type: 'image/jpeg' });
-        
+
         const base64Data = await new Promise((resolve) => {
             const reader = new FileReader();
             reader.onloadend = () => resolve(reader.result);
             reader.readAsDataURL(imgBlob);
         });
-        
+
         await analyzeWithOpenRouter(timestamp, base64Data);
-        
+
     } catch (err) {
         log(`[${timestamp}] EXTRACTION FAILED: ${err.message}`, 'error');
     } finally {
@@ -270,38 +270,38 @@ async function analyzeWithOpenRouter(timestamp, base64Data) {
         log(`[${timestamp}] OPENROUTER API KEY MISSING`, 'error');
         return;
     }
-    
-    log(`[${timestamp}] QUERYING OPENROUTER EMBEDDINGS...`, 'info');
-    
+
+    log(`[${timestamp}] QUERYING OPENROUTER AI...`, 'info');
+
     try {
-        const response = await fetch("https://openrouter.ai/api/v1/embeddings", {
+        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
             method: "POST",
             headers: {
                 "Authorization": `Bearer ${apiKey}`,
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
-                "model": "nvidia/llama-nemotron-embed-vl-1b-v2:free",
-                "input": [
+                "model": "nvidia/nemotron-nano-12b-v2-vl:free",
+                "messages": [
                     {
+                        "role": "user",
                         "content": [
-                            { 
-                                "type": "text", 
-                                "text": "Is this image empty?" 
+                            {
+                                "type": "text",
+                                "text": "Is this image empty?"
                             },
-                            { 
-                                "type": "image_url", 
-                                "image_url": { 
-                                    "url": base64Data 
-                                } 
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": base64Data
+                                }
                             }
                         ]
                     }
-                ],
-                "encoding_format": "float"
+                ]
             })
         });
-        
+
         if (!response.ok) {
             const errText = await response.text();
             let errMsg = errText;
@@ -310,22 +310,20 @@ async function analyzeWithOpenRouter(timestamp, base64Data) {
                 if (parsed.error && parsed.error.message) {
                     errMsg = parsed.error.message;
                 }
-            } catch (e) {}
+            } catch (e) { }
             throw new Error(`HTTP ${response.status} - ${errMsg}`);
         }
-        
+
         const data = await response.json();
-        
-        // Embeddings models return arrays of floats, not text answers
-        const embedding = data.data?.[0]?.embedding;
-        if (embedding) {
-            const slice = embedding.slice(0, 5).map(n => n.toFixed(4));
-            log(`[${timestamp}] VECTOR: [${slice.join(', ')}...]`, 'success');
+
+        const reply = data.choices?.[0]?.message?.content;
+        if (reply) {
+            log(`[${timestamp}] AI REPLY: ${reply}`, 'success');
         } else {
-            log(`[${timestamp}] AI RETURNED NO EMBEDDING`, 'error');
+            log(`[${timestamp}] AI RETURNED NO RESPONSE`, 'error');
         }
         console.log(`[${timestamp}] OpenRouter Success:`, data);
-        
+
     } catch (err) {
         log(`[${timestamp}] AI QUERY FAILED: ${err.message}`, 'error');
         console.error(`[${timestamp}] OpenRouter Error:`, err);
