@@ -26,6 +26,10 @@ let uploadQueueInterval;
 let isUploading = false;
 let isAnalyzing = false;
 
+// Toggle this to test locally vs production
+const API_BASE = 'http://localhost:3000';
+// const API_BASE = 'https://back-ednt.onrender.com';
+
 // IndexedDB Init
 function initDB() {
     return new Promise((resolve, reject) => {
@@ -68,8 +72,8 @@ setInterval(() => {
 async function setupWebcam() {
     try {
         log('TRANSMITTING WAKE-UP PING TO SERVER...');
-        // Fire-and-forget empty request to wake up the Render instance
-        fetch('https://back-ednt.onrender.com/').catch(err => log(`PING ERROR: ${err.message}`, 'error'));
+        // Fire-and-forget empty request to wake up the backend instance
+        fetch(`${API_BASE}/`).catch(err => log(`PING ERROR: ${err.message}`, 'error'));
 
         log('REQUESTING OPTIC SENSOR UPLINK...');
         stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
@@ -228,7 +232,7 @@ async function processAndUploadChunk(timestamp, blob) {
     activeUploads.add(controller);
 
     try {
-        const res = await fetch('https://back-ednt.onrender.com/api/convert', {
+        const res = await fetch(`${API_BASE}/api/convert`, {
             method: 'POST',
             body: formData,
             signal: controller.signal
@@ -298,7 +302,7 @@ async function analyzeWithOpenRouter(timestamp, base64Data) {
     log(`[${timestamp}] QUERYING PALANTIR AEGIS (BACKEND)...`, 'info');
 
     try {
-        const response = await fetch("https://back-ednt.onrender.com/api/analyze", {
+        const response = await fetch(`${API_BASE}/api/analyze`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json"
