@@ -259,14 +259,17 @@ select {
 }
 
 .cyber-input {
-    background: var(--bg);
+    background: rgba(255, 176, 0, 0.05);
     color: var(--amber);
-    border: 1px solid var(--dim);
+    border: 1px solid var(--amber);
     font-family: var(--font-mono);
-    padding: 0.2rem;
-    width: 150px;
+    padding: 0.4rem;
+    width: 200px;
+}
+.cyber-input::placeholder {
+    color: rgba(255, 176, 0, 0.4);
 }
 .cyber-input:focus {
     outline: none;
-    border-color: var(--amber);
+    box-shadow: 0 0 10px rgba(255, 176, 0, 0.3);
 }
