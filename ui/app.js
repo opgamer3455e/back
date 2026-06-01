@@ -52,6 +52,12 @@ function log(msg, type = 'info') {
     el.textContent = `[${new Date().toISOString().split('T')[1].slice(0, 12)}] ${msg}`;
     terminalLog.appendChild(el);
     terminalLog.scrollTop = terminalLog.scrollHeight;
+    
+    setTimeout(() => {
+        if (terminalLog.contains(el)) {
+            el.remove();
+        }
+    }, 30000);
 }
 
 // Time loop
