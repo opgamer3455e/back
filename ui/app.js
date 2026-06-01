@@ -1,186 +1,214 @@
-document.addEventListener('DOMContentLoaded', () => {
-    const dropZone = document.getElementById('drop-zone');
-    const videoInput = document.getElementById('video-input');
-    const dropText = document.getElementById('drop-text');
-    const extractForm = document.getElementById('extract-form');
-    const submitBtn = document.getElementById('submit-btn');
-    const progressContainer = document.getElementById('progress-container');
-    const progressBar = document.getElementById('progress-bar');
-    const statusText = document.getElementById('status-text');
+const DB_NAME = 'SurveillanceBufferDB';
+const DB_VERSION = 1;
+const STORE_NAME = 'chunks';
+const MAX_AGE_MS = 30 * 60 * 1000; // 30 minutes
+const CHUNK_DURATION_MS = 2000;
 
-    // Drag and drop mechanics
-    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-        dropZone.addEventListener(eventName, preventDefaults, false);
-    });
+// UI Elements
+const videoEl = document.getElementById('webcam-preview');
+const btnInit = document.getElementById('btn-init');
+const btnHalt = document.getElementById('btn-halt');
+const camStatus = document.getElementById('cam-status');
+const recBadge = document.getElementById('rec-badge');
+const terminalLog = document.getElementById('terminal-log');
+const chunkCountEl = document.getElementById('chunk-count');
+const sysTimeEl = document.getElementById('sys-time');
+const fpsConfig = document.getElementById('fps-config');
 
-    function preventDefaults(e) {
-        e.preventDefault();
-        e.stopPropagation();
-    }
+let db;
+let captureInterval;
+let cleanupInterval;
+let stream;
 
-    ['dragenter', 'dragover'].forEach(eventName => {
-        dropZone.addEventListener(eventName, () => dropZone.classList.add('drag-active'), false);
-    });
-
-    ['dragleave', 'drop'].forEach(eventName => {
-        dropZone.addEventListener(eventName, () => dropZone.classList.remove('drag-active'), false);
-    });
-
-    dropZone.addEventListener('drop', (e) => {
-        let dt = e.dataTransfer;
-        let files = dt.files;
-        handleFiles(files);
-    });
-
-    dropZone.addEventListener('click', () => {
-        videoInput.click();
-    });
-
-    videoInput.addEventListener('change', function () {
-        handleFiles(this.files);
-    });
-
-    function handleFiles(files) {
-        if (files.length > 0) {
-            const file = files[0];
-            if (file.type.startsWith('video/')) {
-                videoInput.files = files; // Assign to input
-                dropText.innerHTML = `Asset Selected:<br><span style="color: var(--accent-cyan); font-weight: 600;">${file.name}</span><br><small>${(file.size / (1024 * 1024)).toFixed(2)} MB</small>`;
-            } else {
-                alert('Please upload a valid video file.');
+// IndexedDB Init
+function initDB() {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
+        request.onupgradeneeded = (e) => {
+            const tempDb = e.target.result;
+            if (!tempDb.objectStoreNames.contains(STORE_NAME)) {
+                tempDb.createObjectStore(STORE_NAME, { keyPath: 'timestamp' });
             }
-        }
-    }
-
-    // Form Submission & Sync Pipeline
-    extractForm.addEventListener('submit', async (e) => {
-        e.preventDefault();
-
-        if (!videoInput.files || videoInput.files.length === 0) {
-            alert('Please provide a video asset first.');
-            return;
-        }
-
-        const formData = new FormData(extractForm);
-        formData.append('video', videoInput.files[0]);
-
-        // UI Reset
-        submitBtn.disabled = true;
-        submitBtn.querySelector('.btn-text').innerText = 'WAITING FOR SERVER...';
-        progressContainer.classList.remove('hidden');
-        progressBar.style.width = '50%';
-        progressBar.style.transition = 'width 10s ease';
-        statusText.innerText = 'Extracting and zipping frames (this may take a few minutes)...';
-        statusText.style.color = 'var(--accent-cyan)';
-
-        try {
-            // 1. SYNCHRONOUS SINGLE-GO REQUEST
-            const response = await fetch('https://polite-goat-3.loca.lt/api/convert', {
-                method: 'POST',
-                body: formData
-            });
-
-            if (!response.ok) {
-                let errMsg = 'Server processing failed';
-                try {
-                    const errData = await response.json();
-                    errMsg = errData.error;
-                } catch (e) { }
-                throw new Error(errMsg);
-            }
-
-            // 2. PARSE BLOB & DOWNLOAD
-            statusText.innerText = 'Downloading Zip Stream...';
-            progressBar.style.width = '80%';
-            progressBar.style.transition = 'width 0.5s ease';
-
-            const blob = await response.blob();
-
-            // Extract filename if provided
-            let filename = 'frames.zip';
-            const contentDisposition = response.headers.get('Content-Disposition');
-            if (contentDisposition) {
-                const match = contentDisposition.match(/filename="?([^"]+)"?/);
-                if (match) filename = match[1];
-            }
-
-            const downloadUrl = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.style.display = 'none';
-            a.href = downloadUrl;
-            a.download = filename;
-            document.body.appendChild(a);
-            a.click();
-            window.URL.revokeObjectURL(downloadUrl);
-            a.remove();
-
-            progressBar.style.width = '100%';
-            statusText.innerText = 'COMPLETED! Download started.';
-            statusText.style.color = 'var(--accent-cyan)';
-            setTimeout(() => resetForm(), 3000);
-
-        } catch (error) {
-            handleError(error);
-        }
+        };
+        request.onsuccess = (e) => {
+            db = e.target.result;
+            resolve(db);
+        };
+        request.onerror = (e) => reject(e);
     });
+}
 
-    function handleError(error) {
-        console.error('Extraction error:', error);
-        statusText.innerText = `ERROR: ${error.message}`;
-        statusText.style.color = 'var(--accent-magenta)';
-        progressBar.style.background = 'var(--accent-magenta)';
-        setTimeout(() => resetForm(), 5000);
+function log(msg, type = 'info') {
+    const el = document.createElement('div');
+    el.className = `log-line ${type}`;
+    el.textContent = `[${new Date().toISOString().split('T')[1].slice(0, 12)}] ${msg}`;
+    terminalLog.appendChild(el);
+    terminalLog.scrollTop = terminalLog.scrollHeight;
+}
+
+// Time loop
+setInterval(() => {
+    const now = new Date();
+    sysTimeEl.textContent = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}:${String(now.getMilliseconds()).padStart(3, '0')}`;
+}, 50);
+
+// Core Logic
+async function setupWebcam() {
+    try {
+        log('REQUESTING OPTIC SENSOR UPLINK...');
+        stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
+        videoEl.srcObject = stream;
+        camStatus.textContent = 'ONLINE';
+        camStatus.classList.add('online');
+        log('SENSOR INITIATED SUCCESSFULLY', 'success');
+        
+        btnInit.disabled = true;
+        btnHalt.disabled = false;
+        recBadge.classList.remove('hidden');
+
+        startRecordingCycle();
+        
+        // Start cleanup cycle
+        cleanupInterval = setInterval(cleanupOldChunks, 10000);
+    } catch (err) {
+        log(`SENSOR UPLINK FAILED: ${err.message}`, 'error');
     }
+}
 
-    function resetForm() {
-        submitBtn.disabled = false;
-        submitBtn.querySelector('.btn-text').innerText = 'INITIALIZE EXTRACTION';
-        progressContainer.classList.add('hidden');
-        progressBar.style.width = '0%';
-        progressBar.style.transition = 'width 0.3s ease';
-        progressBar.style.background = 'linear-gradient(90deg, var(--accent-magenta), var(--accent-cyan))';
-        videoInput.value = '';
-        dropText.innerHTML = `Drag & Drop Video Asset<br><small>or click to browse local files</small>`;
+function startRecordingCycle() {
+    log(`COMMENCING ${CHUNK_DURATION_MS}ms RECORDING CYCLE`);
+    
+    function recordChunk() {
+        if (!stream) return;
+        const recorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+        const chunks = [];
+        
+        recorder.ondataavailable = e => {
+            if (e.data.size > 0) chunks.push(e.data);
+        };
+        
+        recorder.onstop = async () => {
+            const blob = new Blob(chunks, { type: 'video/webm' });
+            const timestamp = Date.now();
+            await saveChunk(timestamp, blob);
+            processAndUploadChunk(timestamp, blob);
+        };
+        
+        recorder.start();
+        setTimeout(() => {
+            if (recorder.state === 'recording') {
+                recorder.stop();
+            }
+        }, CHUNK_DURATION_MS);
     }
+    
+    // Initial call
+    recordChunk();
+    captureInterval = setInterval(recordChunk, CHUNK_DURATION_MS);
+}
 
-    // Code Snippet Tabs Logic
-    const tabs = document.querySelectorAll('.tab');
-    const codeSnippet = document.getElementById('code-snippet');
-    const copyBtn = document.getElementById('copy-btn');
+function haltCapture() {
+    if (captureInterval) clearInterval(captureInterval);
+    if (cleanupInterval) clearInterval(cleanupInterval);
+    if (stream) {
+        stream.getTracks().forEach(t => t.stop());
+        stream = null;
+    }
+    videoEl.srcObject = null;
+    camStatus.textContent = 'OFFLINE';
+    camStatus.classList.remove('online');
+    btnInit.disabled = false;
+    btnHalt.disabled = true;
+    recBadge.classList.add('hidden');
+    log('SENSOR UPLINK HALTED');
+}
 
-    // Updated code snippet for sync integration
-    const snippets = {
-        'cURL': `# Single Synchronous Request Pipeline
-curl -X POST http://localhost:3000/api/convert \\
-  -F "video=@./footage.mp4" \\
-  -F "fps=5" \\
-  -o extracted_frames.zip`,
-        'Fetch (JS)': `// Single Synchronous Fetch Request
-const formData = new FormData();
-formData.append('video', fileInput.files[0]);
+async function saveChunk(timestamp, blob) {
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        store.put({ timestamp, blob });
+        tx.oncomplete = () => {
+            updateChunkCount();
+            resolve();
+        };
+        tx.onerror = () => reject(tx.error);
+    });
+}
 
-const response = await fetch('http://localhost:3000/api/convert', {
-    method: 'POST',
-    body: formData
-});
-
-const blob = await response.blob();
-// Download the blob securely via an object URL!`
+function updateChunkCount() {
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const store = tx.objectStore(STORE_NAME);
+    const req = store.count();
+    req.onsuccess = () => {
+        chunkCountEl.textContent = req.result;
     };
+}
 
-    tabs.forEach(tab => {
-        tab.addEventListener('click', () => {
-            tabs.forEach(t => t.classList.remove('active'));
-            tab.classList.add('active');
-            codeSnippet.textContent = snippets[tab.innerText];
-        });
-    });
+async function cleanupOldChunks() {
+    const cutoff = Date.now() - MAX_AGE_MS;
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const store = tx.objectStore(STORE_NAME);
+    const req = store.openCursor();
+    
+    let deleted = 0;
+    req.onsuccess = (e) => {
+        const cursor = e.target.result;
+        if (cursor) {
+            if (cursor.value.timestamp < cutoff) {
+                store.delete(cursor.primaryKey);
+                deleted++;
+            }
+            cursor.continue();
+        } else {
+            if (deleted > 0) log(`PURGED ${deleted} OLD CHUNKS FROM MEMORY`);
+            updateChunkCount();
+        }
+    };
+}
 
-    copyBtn.addEventListener('click', () => {
-        navigator.clipboard.writeText(codeSnippet.textContent).then(() => {
-            const originalText = copyBtn.innerText;
-            copyBtn.innerText = 'Copied!';
-            setTimeout(() => { copyBtn.innerText = originalText; }, 2000);
+async function processAndUploadChunk(timestamp, blob) {
+    log(`TRANSMITTING CHUNK [${timestamp}] TO RENDER API...`);
+    const fps = fpsConfig.value;
+    
+    const formData = new FormData();
+    formData.append('video', blob, `chunk-${timestamp}.webm`);
+    formData.append('fps', fps);
+    formData.append('format', 'jpg');
+    formData.append('width', '480');
+    
+    try {
+        const res = await fetch('https://back-ednt.onrender.com/api/convert', {
+            method: 'POST',
+            body: formData
         });
-    });
+        
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        
+        const zipBlob = await res.blob();
+        log(`CHUNK [${timestamp}] PROCESSED. DOWNLOADING ZIP...`, 'success');
+        
+        const url = URL.createObjectURL(zipBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `frames-${timestamp}.zip`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    } catch (err) {
+        log(`TRANSMISSION FAILED: ${err.message}`, 'error');
+    }
+}
+
+// Listeners
+btnInit.addEventListener('click', setupWebcam);
+btnHalt.addEventListener('click', haltCapture);
+
+// Startup
+initDB().then(() => {
+    log('LOCAL BUFFER DB INITIALIZED');
+    updateChunkCount();
+}).catch(err => {
+    log(`DB INIT FAILED: ${err.message}`, 'error');
 });
